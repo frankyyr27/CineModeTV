@@ -23,6 +23,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Toast
 import java.io.ByteArrayInputStream
 import kotlin.math.min
 
@@ -40,7 +41,8 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var cursor: CursorView
     private val handler = Handler(Looper.getMainLooper())
-    private val hideCursor = Runnable { cursor.visibility = View.INVISIBLE }
+    private var curX = 0f
+    private var curY = 0f
 
     private var customView: View? = null
     private var customCallback: WebChromeClient.CustomViewCallback? = null
@@ -68,7 +70,7 @@ class MainActivity : Activity() {
   var SHIELD = __SHIELD__;
   if (LITE) {
     var st = document.createElement('style');
-    st.textContent = '*,*::before,*::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important;scroll-behavior:auto!important}';
+    st.textContent = '*,*::before,*::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important;scroll-behavior:auto!important;filter:none!important;box-shadow:none!important;mix-blend-mode:normal!important}';
     (document.head || document.documentElement).appendChild(st);
   }
   if (!SHIELD) return;
@@ -137,20 +139,22 @@ class MainActivity : Activity() {
         container = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         webView = WebView(this).apply {
             setBackgroundColor(Color.BLACK)
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
             isFocusable = true
             isFocusableInTouchMode = true
         }
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         container.addView(webView, FrameLayout.LayoutParams(match, match))
 
-        cursor = CursorView(this).apply {
-            cx = resources.displayMetrics.widthPixels / 2f
-            cy = resources.displayMetrics.heightPixels / 2f
-        }
-        container.addView(cursor, FrameLayout.LayoutParams(match, match))
+        cursor = CursorView(this)
+        container.addView(cursor, FrameLayout.LayoutParams(cursor.sizePx, cursor.sizePx))
+        curX = resources.displayMetrics.widthPixels / 2f
+        curY = resources.displayMetrics.heightPixels / 2f
+        placeCursor()
         setContentView(container)
-        showCursor()
+        Toast.makeText(
+            this, "CineMode v2.1 - use arrow keys to move the pointer, OK to click",
+            Toast.LENGTH_LONG
+        ).show()
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -158,7 +162,6 @@ class MainActivity : Activity() {
             mediaPlaybackRequiresUserGesture = false
             loadWithOverviewMode = true
             useWideViewPort = true
-            offscreenPreRaster = true
             setSupportMultipleWindows(true)
             javaScriptCanOpenWindowsAutomatically = false
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
@@ -221,7 +224,7 @@ class MainActivity : Activity() {
                 customCallback = null
                 webView.visibility = View.VISIBLE
                 webView.requestFocus()
-                showCursor()
+                cursor.visibility = View.VISIBLE
             }
         }
 
@@ -260,7 +263,6 @@ class MainActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    showCursor()
                     click()
                 }
                 return true
@@ -274,7 +276,6 @@ class MainActivity : Activity() {
     }
 
     private fun moveCursor(dx: Float, dy: Float) {
-        showCursor()
         val w = container.width.toFloat().takeIf { it > 0 } ?: resources.displayMetrics.widthPixels.toFloat()
         val h = container.height.toFloat().takeIf { it > 0 } ?: resources.displayMetrics.heightPixels.toFloat()
         val edge = h / 14f
@@ -284,27 +285,32 @@ class MainActivity : Activity() {
         var sx = 0
         var sy = 0
         val scrollStep = (Math.abs(dx) + Math.abs(dy)) * 6f / density
-        if (dy < 0 && cursor.cy <= edge) sy = -scrollStep.toInt()
-        if (dy > 0 && cursor.cy >= h - edge) sy = scrollStep.toInt()
-        if (dx < 0 && cursor.cx <= edge) sx = -scrollStep.toInt()
-        if (dx > 0 && cursor.cx >= w - edge) sx = scrollStep.toInt()
+        if (dy < 0 && curY <= edge) sy = -scrollStep.toInt()
+        if (dy > 0 && curY >= h - edge) sy = scrollStep.toInt()
+        if (dx < 0 && curX <= edge) sx = -scrollStep.toInt()
+        if (dx > 0 && curX >= w - edge) sx = scrollStep.toInt()
         if (sx != 0 || sy != 0) {
             val js = scrollJs
-                .replace("__X__", (cursor.cx / density).toInt().toString())
-                .replace("__Y__", (cursor.cy / density).toInt().toString())
+                .replace("__X__", (curX / density).toInt().toString())
+                .replace("__Y__", (curY / density).toInt().toString())
                 .replace("__DX__", sx.toString())
                 .replace("__DY__", sy.toString())
             webView.evaluateJavascript(js, null)
         }
 
-        cursor.cx = (cursor.cx + dx).coerceIn(0f, w - 1f)
-        cursor.cy = (cursor.cy + dy).coerceIn(0f, h - 1f)
-        cursor.invalidate()
+        curX = (curX + dx).coerceIn(0f, w - 1f)
+        curY = (curY + dy).coerceIn(0f, h - 1f)
+        placeCursor()
+    }
+
+    private fun placeCursor() {
+        cursor.translationX = curX - cursor.pad
+        cursor.translationY = curY - cursor.pad
     }
 
     private fun click() {
-        val x = cursor.cx
-        val y = cursor.cy
+        val x = curX
+        val y = curY
         val t = SystemClock.uptimeMillis()
         val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0)
         down.source = InputDevice.SOURCE_TOUCHSCREEN
@@ -316,12 +322,6 @@ class MainActivity : Activity() {
             webView.dispatchTouchEvent(up)
             up.recycle()
         }, 60)
-    }
-
-    private fun showCursor() {
-        cursor.visibility = View.VISIBLE
-        handler.removeCallbacks(hideCursor)
-        handler.postDelayed(hideCursor, 6000)
     }
 
     // ---- Lifecycle ----------------------------------------------------------
